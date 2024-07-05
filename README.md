@@ -1,11 +1,9 @@
 ## About
-**Requires [pe-sieve](https://github.com/hasherezade/pe-sieve/releases) in script root.**
+DAHelper is a script that I put together as something to run with procmon, regshot etc., for initial analysis. It will set a series of baselines, monitor new process and file creation, run a second series of baselines, then diff the two sets and print/log results.
 
-Script that I put together as something to run with procmon, regshot etc., for initial analysis. It will set a series of baselines, watch processes and dropped files, run a second series of baselines, then diff the two sets and print/log results.
+**Requires [pe-sieve](https://github.com/hasherezade/pe-sieve/releases), [MFTECmd](https://ericzimmerman.github.io/#!index.md), and [ExtractUsjJrnl](https://github.com/jschicht/ExtractUsnJrnl?tab=readme-ov-file) in script root.**
 
 Between baseline sets: 
-  - pe-sieve will run on all newly spawned processes (I need to make a process exclusion list).
-  - Modules will be listed.
-  - Files will get copied to a directory in script root on creation events.
+  - pe-sieve will run on newly spawned processes (output will be 'sieve-output' in script root) and their modules will be listed.
+  - When a file creation event is triggered, the file will be copied to 'copied_files' in script root.
 
-Run the script > wait > run the sample > hit enter > wait > get stuff :)
