@@ -278,7 +278,6 @@ function Export-Baselines {
             $streamResults | Export-Csv -Path "$blDirectory\Streams.csv" -NoTypeInformation
         }#>
         
-        
         Write-Host "    [>] Getting files.." -Fore Magenta
         $fileSystemJob = Start-Job -ArgumentList $blDirectory -ScriptBlock { 
             param ($blDirectory)
