@@ -1,7 +1,10 @@
 <#
 .SYNOPSIS
-Dynamic malware analysis and threat hunting helper script.
+Dynamic malware analysis helper script.
+
 .DESCRIPTION
+- Gets needed tools.
+- Sets up sysmon with a trace config.
 - Sets a series of baselines.
     - Creates a WMI event to monitor newly created processes.
         - Prints out modules.
@@ -10,14 +13,19 @@ Dynamic malware analysis and threat hunting helper script.
     - Runs pe-sieve over all newly created processes.
 - Sets a second series of baselines
 - Checks for diffs between baselines and prints/logs results.
+
 .LINK
-Required in script root:
+Tools used:
 - https://github.com/hasherezade/pe-sieve/releases/tag/v0.3.9
 - https://github.com/jschicht/ExtractUsnJrnl?tab=readme-ov-file
 - https://github.com/EricZimmerman/MFTECmd
+
 .NOTES 
 - If hitting [Enter] once doesn't trigger the closing of events and the 
 start of the second round of baselines, spam [Enter] a few more times.
+- If using without network connection, make a copy of these tools and drop
+in script root. Match the directory structure at the bottom of the script, 
+or edit the paths. 
 #>
 
 $compareBaselines = @"
@@ -38,48 +46,51 @@ public class CompareBaselines
     {
         var fullRowsInFirst = new Dictionary<string, string>();
         var fullRowsInSecond = new Dictionary<string, string>();
+        string[] firstFileLines = File.ReadAllLines(blOne);
+        string[] secondFileLines = File.ReadAllLines(blTwo);
+        string headers = firstFileLines[0];
 
-        foreach (var line in File.ReadAllLines(blOne))
+        for (int i = 1; i < firstFileLines.Length; i++)
         {
-            var columns = line.Split(',');
+            var columns = firstFileLines[i].Split(',');
             if (columns.Length > index)
-                fullRowsInFirst[columns[index]] = line;
+                fullRowsInFirst[columns[index]] = firstFileLines[i];
         }
 
-        foreach (var line in File.ReadAllLines(blTwo))
+        for (int i = 1; i < secondFileLines.Length; i++)
         {
-            var columns = line.Split(',');
+            var columns = secondFileLines[i].Split(',');
             if (columns.Length > index)
-                fullRowsInSecond[columns[index]] = line;
+                fullRowsInSecond[columns[index]] = secondFileLines[i];
         }
 
-        var newKeys = new List<string>();
+        var newKeys = new List<string> { headers };  
         foreach (var key in fullRowsInSecond.Keys)
         {
             if (!fullRowsInFirst.ContainsKey(key))
                 newKeys.Add(fullRowsInSecond[key]);
         }
 
-        var removedKeys = new List<string>();
+        var removedKeys = new List<string> { headers }; 
         foreach (var key in fullRowsInFirst.Keys)
         {
             if (!fullRowsInSecond.ContainsKey(key))
                 removedKeys.Add(fullRowsInFirst[key]);
         }
+
         return Tuple.Create(newKeys, removedKeys);
     }
 }
 "@
 
 function Compare-BaseLines {
-
     [CmdletBinding()]
     Param(
-        [Parameter(Position=0,Mandatory=$true)]
+        [Parameter(Position=0, Mandatory=$true)]
         [string]$blDirOne,
-        [Parameter(Position=1,Mandatory=$true)]
+        [Parameter(Position=1, Mandatory=$true)]
         [string]$blDirTwo,
-        [Parameter(Position=2,Mandatory=$true)]
+        [Parameter(Position=2, Mandatory=$true)]
         [string]$reportPath
     )
 
@@ -112,7 +123,7 @@ function Compare-BaseLines {
                     '^EvtConsumers'     { 'Event Consumers' }
                     '^USNJrnl'          { 'Change Journal' }
                     '^FirewallRules'    { 'Firewall Rules' }
-                    '^Files'			{ 'Files' }
+                    '^Files'            { 'Files' }
                     '^FWLog'            { 'Firewall Logs' }
                     '^Links'            { 'Links' }
                     '^Pipes'            { 'Named Pipes' }
@@ -128,9 +139,9 @@ function Compare-BaseLines {
                     '^StartUp'          { 'Start Up' }
                     '^StartUpCmd'       { 'Start Up Cmd' }
                     '^Streams'          { 'Streams' }
-                    '^SMCmdLine'		{ 'Proc Creation CmdLine' }
-                    '^SMDNS'			{ 'DNS Query Evts' }
-                    '^SMImgLoad' 		{ 'Image Load Evts' }
+                    '^SMCmdLine'        { 'Proc Creation CmdLine' }
+                    '^SMDNS'            { 'DNS Query Evts' }
+                    '^SMImgLoad'        { 'Image Load Evts' }
                     '^TcpConnections'   { 'Network Traffic' }
                     '^UrlCache'         { 'INet Cache' }
                     default             { 'Type Unknown' }
@@ -139,34 +150,70 @@ function Compare-BaseLines {
                 $diffs = [CompareBaselines]::Compare($bl1, $bl2)
                 $newEntries = $diffs.Item1
                 $removedEntries = $diffs.Item2
-                
+
                 $title = "`n=======================> [ $blType ] <======================="
                 $new = "------------------------------ [ New ] ------------------------------"
                 $removed = "`n--------------------------- [ Removed ] ---------------------------"
                 
-                if ($newEntries -ne $null) {
-                    Write-Host = $title -Fore Cyan
-                    Write-Host $new -Fore Green
-                    foreach ($entry in $newEntries) { Write-Host $entry }
+                $printNew = $newEntries.Count -gt 1
+                $printRemoved = $removedEntries.Count -gt 1
 
+                if ($printNew -or $printRemoved) {
+                    Write-Host $title -Fore Cyan
                     $title | Out-File -FilePath $reportPath -Append
+                }
+
+                if ($printNew) {
+                    Write-Host $new -Fore Green
+
+                    $headers = $newEntries[0] -split ','
+
+                    $counter = 0
+                    foreach ($entry in $newEntries) { 
+                        if ($counter -gt 0) {  
+                            $color = if ($counter % 2 -eq 0) { "White" } else { "Gray" }
+                            $columns = $entry -split ','
+
+                            for ($i = 0; $i -lt $columns.Length; $i++) {
+                                Write-Host "$($headers[$i]): $($columns[$i])" -Fore $color
+                            }
+                            Write-Host ""
+                        }
+                        $counter++
+                    }
+
                     $new | Out-File -FilePath $reportPath -Append
                     foreach ($entry in $newEntries) { Add-Content -Path $reportPath $entry }
+                }
 
-                    if ($removedEntries -ne $null) {
-                        Write-Host $removed -Fore Red
-                        foreach ($entry in $removedEntries) { Write-Host $entry }
+                if ($printRemoved) {
+                    Write-Host $removed -Fore Red
 
-                        $removed | Out-File -FilePath $reportPath -Append
-                        foreach ($entry in $removedEntries) { Add-Content -Path $reportPath $entry }
+                    $headers = $removedEntries[0] -split ','
+
+                    $counter = 0
+                    foreach ($entry in $removedEntries) {
+                        if ($counter -gt 0) {  
+                            $color = if ($counter % 2 -eq 0) { "White" } else { "Gray" }
+                            $columns = $entry -split ','
+
+                            for ($i = 0; $i -lt $columns.Length; $i++) {
+                                Write-Host "$($headers[$i]): $($columns[$i])" -Fore $color
+                            }
+                            Write-Host ""
+                        }
+                        $counter++
                     }
+
+                    $removed | Out-File -FilePath $reportPath -Append
+                    foreach ($entry in $removedEntries) { Add-Content -Path $reportPath $entry }
                 }
             } else {
-            Write-Warning "[!] File $($file.Name) does not exist in second directory."
+                Write-Warning "[!] File $($file.Name) does not exist in second directory."
             }
         }
     }
- 
+
     END {
         Write-Host "[>] Comparisons complete!" -Fore Cyan
     }
@@ -231,7 +278,8 @@ function Export-Baselines {
             $streamResults | Export-Csv -Path "$blDirectory\Streams.csv" -NoTypeInformation
         }#>
         
-        Write-Host "	[>] Getting files.." -Fore Magenta
+        
+        Write-Host "    [>] Getting files.." -Fore Magenta
         $fileSystemJob = Start-Job -ArgumentList $blDirectory -ScriptBlock { 
             param ($blDirectory)
             Get-ChildItem -Path C:\Windows -Recurse -Force | 
@@ -243,7 +291,7 @@ function Export-Baselines {
             Get-ChildItem -Path "C:\Program Files (x86)" -Recurse | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
         }
 
-        <#Write-Host "    [>] Getting InProcServer32.." -Fore Magenta 
+        Write-Host "    [>] Getting InProcServer32.." -Fore Magenta 
         $inprocServerJob = Start-Job -ArgumentList $blDirectory -ScriptBlock {
             param ($blDirectory)
             $hkcrCLSID = "Registry::HKEY_CLASSES_ROOT\CLSID"
@@ -260,7 +308,10 @@ function Export-Baselines {
                     if ($inprocServer32Path -ne $null -and $inprocServer32Path -ne "") {
                         $fileHash = (Get-FileHash -Path $inprocServer32Path -Algorithm SHA256).Hash
                     }
-                } catch { Write-Host $_ }
+                } catch {
+                    $errMsg = "[Error] $($_.Exception.Message)"
+                    Add-Content -Path -Path $errorLog -Value $errMsg
+                }
 
                 $item = [PSCustomObject]@{
                     FileHash       = $fileHash
@@ -269,9 +320,9 @@ function Export-Baselines {
                 }
                 $item | Export-Csv -Path "$blDirectory\InProcSrv.csv" -Append -NoTypeInformation -Encoding utf8
             }
-        }#>
+        }
 
-        Write-Host "    [>] Getting LocalServer32.." -Fore Magenta 
+        <#Write-Host "    [>] Getting LocalServer32.." -Fore Magenta 
         $localServerJob = Start-Job -ArgumentList $blDirectory -ScriptBlock {
             param ($blDirectory)
             $hkcrCLSID = "Registry::HKEY_CLASSES_ROOT\CLSID"
@@ -288,7 +339,10 @@ function Export-Baselines {
                     if ($localServer32Path -ne $null -and $localServer32Path -ne "") {
                         $fileHash = (Get-FileHash -Path $localServer32Path -Algorithm SHA256).Hash
                     }
-                } catch { Write-Host $_ }
+                } catch {
+                    $errMsg = "[Error] $($_.Exception.Message)"
+                    Add-Content -Path -Path $errorLog -Value $errMsg
+                }
 
                 $item = [PSCustomObject]@{
                     FileHash       = $fileHash
@@ -297,7 +351,7 @@ function Export-Baselines {
                 }
                 $item | Export-Csv -Path "$blDirectory\LocalSrv.csv" -Append -NoTypeInformation -Encoding utf8
             }
-        }
+        }#>
         
         Write-Host "    [>] Getting USNJournal.." -Fore Magenta
         Extract-USNJournal $blDirectory
@@ -474,40 +528,38 @@ function Export-Baselines {
                     }
                 }
             }
-        } catch { Write-Host $_ }
+        } catch {
+            $errMsg = "[Error] $($_.Exception.Message)"
+            Add-Content -Path -Path $errorLog -Value $errMsg
+        }
                     
-        Write-Host "	[>] Getting sysmon events.." -Fore Magenta
-        Extract-From-Sysmon $blDirectory
-        
+        Write-Host "    [>] Getting sysmon events.." -Fore Magenta
+        Extract-Sysmon $blDirectory
+    
         Write-Host "[>] Waiting for jobs.." -Fore Green
-        #Wait-Job $streamJob
-        Wait-Job $fileSystemJob
-        #Wait-Job $inprocServerJob
-        Wait-Job $localServerJob
+        $running = @(Get-Job | Where-Object { $_.State -eq 'Running' })
+        $running | Wait-Job -Any | Out-Null
     }
 
     END {
-        #Remove-Job $streamJob
-        Remove-Job $fileSystemJob
-        #Remove-Job $inprocServerJob
-        Remove-Job $localServerJob
+        Get-Job | Remove-Job
         Write-Host "[>] Baselines exported!" -Fore Cyan
     }
 }
 
-function Check-NewProcs {
+function Monitor-CreationEvents {
 <#
 .DESCRIPTION
 Starts a file system watcher for temp directories; copies created files to script root.
 Registers a WMI event to monitor new processes that open.
 Runs pe-sieve on the process and checks it's loaded modules.
 .NOTES 
-- Generates a lot of output.
-- Could add exclusions for processes with the WQL query.
+- Edit the exclusions in the event query.
+- Edit pe-sieve switches.
 #>
 
     BEGIN {
-        if (-not (Test-Path -Path '.\pe-sieve64.exe')) {
+        if (-not (Test-Path -Path $peSieve)) {
             Write-Warning "[!] pe-sieve not found, skipping proc watch" 
             return 
         }
@@ -523,13 +575,16 @@ Runs pe-sieve on the process and checks it's loaded modules.
               "AND TargetInstance.Name != 'SearchFilterHost.exe' " +
               "AND TargetInstance.Name != 'dllhost.exe' " +
               "AND TargetInstance.Name != 'svchost.exe'" + 
-              "AND TargetInstance.Name != 'smartscreen.exe'"
+              "AND TargetInstance.Name != 'smartscreen.exe'" +
+              "AND TargetInstance.Name != 'RuntimeBroker.exe'" + 
+              "AND TargetInstance.Name != 'ApplicationFrameHost.exe'" + 
+              "AND TargetInstance.Name != 'backgroundTaskHost.exe'" 
               
         Register-WmiEvent -Query $eventQuery -SourceIdentifier ProcessCreation -Action {
             $process = $event.SourceEventArgs.NewEvent.TargetInstance
 
             Write-Host "[>] New process started: $($process.Name), PID: $($process.ProcessId)" -Fore Cyan
-            cmd /c pe-sieve64.exe /pid $process.ProcessId /dir "$PSScriptRoot\sieve_output" /quiet /iat 3 /obfusc 3 /shellc 3 /threads /dmode 3 /imp 1 /minidmp
+            cmd /c "$PSScriptRoot\Tools\pe-sieve64.exe" /pid $process.ProcessId /dir "$PSScriptRoot\sieve_output" /quiet /iat 3 /obfusc 3 /shellc 3 /threads /dmode 3 /imp 1 /minidmp
 
             $modules = Get-Process -id $process.ProcessId | Select-Object -ExpandProperty Modules | 
                 Select-Object ModuleName, FileName, Company
@@ -557,7 +612,9 @@ Runs pe-sieve on the process and checks it's loaded modules.
     }    
     END {
         Get-EventSubscriber | Unregister-Event
-        Remove-Job *
+        Get-Job | Remove-Job
+        Move-Item -Path "$PSScriptRoot\sieve_output" -Destination $coreDir -Force 
+        Move-Item -Path "$PSScriptRoot\copied_from_create" -Destination $coreDir -Force 
     }
 }
 
@@ -585,57 +642,23 @@ function Copy-OnCreate {
         NotifyFilter = [IO.NotifyFilters]'FileName, LastWrite'
     }
     
-    Register-ObjectEvent $tempFSW Created -SourceIdentifier TempFileCreated -Action {
+    $action = {
         $fName = $Event.SourceEventArgs.Name 
         $fullPath = $Event.SourceEventArgs.FullPath 
 
         Write-Host "[>] File created: '$fullPath'" -Fore Magenta
         try {
-            Copy-Item -Path $fullPath -Destination "$PSScriptRoot\copied_files" 
+            Copy-Item -Path $fullPath -Destination "$PSScriptRoot\copied_from_create"
             Write-Host "    [+] Copy success" -Fore Green 
         } catch {
             Write-Host "    [!] Failed copy - $_" -Fore DarkRed
         }
     }
 
-    Register-ObjectEvent $appDataFSW Created -SourceIdentifier AppDataFileCreated -Action {
-        $fName = $Event.SourceEventArgs.Name 
-        $fullPath = $Event.SourceEventArgs.FullPath 
-
-        Write-Host "[>] File created: '$fullPath'" -Fore Magenta
-        try {
-            Copy-Item -Path $fullPath -Destination "$PSScriptRoot\copied_files" 
-            Write-Host "    [+] Copy success" -Fore Green 
-        } catch {
-            Write-Host "    [!] Failed copy - $_" -Fore DarkRed
-        }
-    }
-
-    Register-ObjectEvent $publicFSW Created -SourceIdentifier PublicFileCreated -Action {
-        $fName = $Event.SourceEventArgs.Name 
-        $fullPath = $Event.SourceEventArgs.FullPath 
-
-        Write-Host "[>] File created: '$fullPath'" -Fore Magenta 
-        try {
-            Copy-Item -Path $fullPath -Destination "$PSScriptRoot\copied_files"
-            Write-Host "    [+] Copy success" -Fore Green 
-        } catch {
-            Write-Host "    [!] Failed copy - $_" -Fore DarkRed 
-        }
-    }
-    
-    Register-ObjectEvent $programDataFSW Created -SourceIdentifier ProgramDataFileCreated -Action {
-        $fName = $Event.SourceEventArgs.Name 
-        $fullPath = $Event.SourceEventArgs.FullPath 
-
-        Write-Host "[>] File created: '$fullPath'" -Fore Magenta 
-        try {
-            Copy-Item -Path $fullPath -Destination "$PSScriptRoot\copied_files"
-            Write-Host "    [+] Copy success" -Fore Green 
-        } catch {
-            Write-Host "    [!] Failed copy - $_" -Fore DarkRed 
-        }
-    }
+    Register-ObjectEvent $tempFSW Created -SourceIdentifier TempFileCreated -Action $action
+    Register-ObjectEvent $appDataFSW Created -SourceIdentifier AppDataFileCreated -Action $action
+    Register-ObjectEvent $publicFSW Created -SourceIdentifier PublicFileCreated -Action $action
+    Register-ObjectEvent $programDataFSW Created -SourceIdentifier ProgramDataFileCreated -Action $action
 }
 
 function Extract-USNJournal {
@@ -649,26 +672,30 @@ function Extract-USNJournal {
     $dn6Installed = $dotNetRuntimes -like "*Microsoft.NETCore.App 6.*"
     if (-not $dn6Installed) {
         try {
+            Write-Host "[>] Installing .NET 6 Runtime" -Fore Green 
             winget install --id=Microsoft.DotNet.Runtime.6 -e
         } catch {
-            Write-Error "[!] Error installing DotNet6 Runtime for MFTECmd $_"
-            Write-Host "[>] Skipping USNJournal"
+            Write-Error "[!] Error installing .NET 6 Runtime for MFTECmd $_"
+            Write-Host "[>] Skipping USNJournal extraction" -Fore Yellow
             return
         }
     }
     
-    if (Test-Path "ExtractUsnJrnl64.exe") {
-        cmd /c ExtractUsnJrnl64.exe /DevicePath:c: /OutputName:usnjrnl.bin | Out-Null
+    if (Test-Path $exUsnJrnl) {
+        & $exUsnJrnl /DevicePath:c: /OutputName:usnjrnl.bin | Out-Null
     } else { Write-Warning "[!] Missing ExtractUsnJrnl64.exe, skipping"}
     
-    if (Test-Path "MFTECmd.exe") {
-        cmd /c MFTECmd.exe -f usnjrnl.bin --csv "$blDirectory" --csvf USNJrnl.csv | Out-Null
+    if (Test-Path $mfteCmd) {
+        & $mfteCmd -f $usnJrnlBin --csv $blDirectory --csvf journal.csv | Out-Null
+        $jrnl = Import-Csv -Path "$blDirectory\journal.csv"
+        $jrnl | Select-Object Name, FileAttributes | Export-Csv -Path "$blDirectory\USNJrnl.csv" -NoTypeInformation
+        Remove-Item -Path "$blDirectory\journal.csv" -Force
     } else { Write-Warning "[!] Missing MFTECmd.exe, skipping"}
     
-    del usnjrnl.bin
+    Remove-Item -Path $usnJrnlBin -Force 
 }
 
-function Extract-From-Sysmon {
+function Extract-Sysmon {
     param (
         [Parameter(Position=0,Mandatory=$true)]
         [string]$blDirectory
@@ -719,7 +746,6 @@ function Extract-From-Sysmon {
     $imgLoadResults | Export-Csv -Path "$blDirectory\SMImgLoad.csv" -NoTypeInformation
 }
  
-
 function Get-Addresses {
     $unicodeExp = [Regex] "[\u0020-\u007E]{7,}"
     $asciiExp = [Regex] "[\x20-\x7E]{7,}"
@@ -785,7 +811,10 @@ function Get-Addresses {
                 }
             }
         }
-    } catch { Write-Host $_ }
+    } catch {
+        $errMsg = "[Error] $($_.Exception.Message)"
+        Add-Content -Path -Path $errorLog -Value $errMsg
+    }
     return $results
 }
 
@@ -824,55 +853,149 @@ function Get-RootThumprints {
     return $rootThumbprints
 }
 
-function Kill-Edge {
-    foreach ($service in (Get-Service -Name "*edge*" | Where-Object { $_.DisplayName -like "*Microsoft Edge*" }).Name) {
-        Stop-Service -Name $service -Force
-    }
-    foreach ($proc in (Get-Process | Where-Object {($_.Path -like "$([Environment]::GetFolderPath('ProgramFilesX86'))\Microsoft\*") `
-        -or ($_.Name -like "*msedge*")}).Id) {
-            Stop-Process -Id $proc -Force 
+function Get-Tools {
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    
+        $mfteCmd = "https://f001.backblazeb2.com/file/EricZimmermanTools/net6/MFTECmd.zip"
+        $peSieve = "https://github.com/hasherezade/pe-sieve/releases/download/v0.3.9/pe-sieve64.exe"
+        $exUsnJrnl = "https://github.com/jschicht/ExtractUsnJrnl/archive/refs/heads/master.zip"
+        $sysmon = "https://download.sysinternals.com/files/Sysmon.zip"
+        $smTraceConfig = "https://github.com/bakedmuffinman/Neo23x0-sysmon-config/archive/refs/heads/main.zip"
+        
+        Invoke-WebRequest -Uri $mfteCmd -OutFile "$Tools\MFTECmd.zip"
+        Invoke-WebRequest -Uri $peSieve -OutFile "$Tools\pe-sieve64.exe"
+        Invoke-WebRequest -Uri $exUsnJrnl -OutFile "$Tools\ExtractUsnJrnl.zip"
+        Invoke-WebRequest -Uri $smTraceConfig -OutFile "$Tools\sysmon-configs.zip"
+        Invoke-WebRequest -Uri $sysmon -OutFile "$Tools\sysmon.zip"
+        
+        Expand-Archive -Path "$Tools\MFTECmd.zip" -Destination "$Tools\MFTECmd" -Force 
+        Expand-Archive -Path "$Tools\ExtractUsnJrnl.zip" -Destination "$Tools\ExtractUsnJrnl" -Force 
+        Expand-Archive -Path "$Tools\sysmon.zip" -Destination "$Tools\sysmon" -Force 
+        Expand-Archive -Path "$Tools\sysmon-configs.zip" -Destination "$Tools\sysmon-configs" -Force
+        
+        Remove-Item "$Tools\MFTECmd.zip" -Force
+        Remove-Item "$Tools\ExtractUsnJrnl.zip" -Force 
+        Remove-Item "$Tools\sysmon.zip" -Force
+        Remove-Item "$Tools\sysmon-configs.zip" -Force
+
+        Write-Host "[>] Tools downloaded" -Fore Green 
+    } catch {
+        $errMsg = "[Error] $($_.Exception.Message)"
+        Add-Content -Path -Path $errorLog -Value $errMsg
     }
 }
+
+function Kill-Edge {
+    $kEdge = Read-Host "[?] Kill Edge processes? [y/n]"
+    if ($kEdge -eq 'y') {
+        foreach ($service in (Get-Service -Name "*edge*" | Where-Object { $_.DisplayName -like "*Microsoft Edge*" }).Name) {
+            Stop-Service -Name $service -Force
+        }
+
+        foreach ($proc in (Get-Process | Where-Object {($_.Path -like "$([Environment]::GetFolderPath('ProgramFilesX86'))\Microsoft\*") `
+            -or ($_.Name -like "*msedge*")}).Id) {
+                Stop-Process -Id $proc -Force 
+        }
+    } else {
+        return
+    }
+}
+
+function Check-Sysmon {
+    $isRules = Get-ChildItem -Path HKLM:\SYSTEM\CurrentControlSet\Services -Recurse -Include 'Parameters' | 
+               Where-Object { $_.Property -contains 'Rules' }
+
+    if ($isRules -ne $null) {
+        Write-Host "[>] Sysmon detected" -Fore Green 
+        $clearSysmon = Read-Host "[?] Clear sysmon logs before starting? [y/n]" 
+
+        if ($clearSysmon -eq 'y') {
+            wevtutil cl "Microsoft-Windows-Sysmon/Operational"
+            return 
+        } else {
+            return
+        }
+        
+    } else {
+        Write-Host "[>] Sysmon not detedcted" -Fore Yellow
+        $installSysmon = Read-Host "[?] Install with trace config? [y/n]"
+        if ($installSysmon -eq 'y') {
+            & $sysmon64 -accepteula -i $sysmonConfig
+            return 
+        } else {
+            return 
+        }
+    }
+}
+
+function Check-FirstRun {
+    $runFile = Join-Path -Path $PSScriptRoot -ChildPath "has_run.txt"
+    if (-not(Test-Path -Path $runFile)) {
+        "qwerty123" | Out-File -FilePath $runFile
+
+        Write-Host "[>] First run detected" -Fore Green 
+        $install = Read-Host "[?] Install tools? [y/n]"
+        if ($install -eq 'y') {
+            Get-Tools 
+        } else {
+            return 
+        } 
+    } else { 
+        return 
+    }
+}
+
+# --------------------------------- [ Directory ] ---------------------------------
+
+$stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+
+$script:coreDir = "$PSScriptRoot\Results_$stamp"
+$script:tools = "$PSScriptRoot\Tools"
+$sieveOutput = "$PSScriptRoot\sieve_output"
+$copiedFiles = "$PSScriptRoot\copied_from_create"
+$reportPath = "$coreDir\report.txt"
+
+New-Item -Path $coreDir -ItemType Directory | Out-Null 
+New-Item -Path $sieveOutput -ItemType Directory | Out-Null
+New-Item -Path $copiedFiles -ItemType Directory | Out-Null 
+New-Item -Path $reportPath -ItemType File | Out-Null 
+if (-not(Test-Path $tools)) { New-Item -Path $tools -ItemType Directory | Out-Null }
+
+$script:sysmonConfig = "$tools\sysmon-configs\Neo23x0-sysmon-config-main\sysmonconfig-trace.xml"
+$script:mfteCmd = "$tools\MFTECmd\MFTECmd.exe"
+$script:exUsnJrnl = "$tools\ExtractUsnJrnl\ExtractUsnJrnl-master\ExtractUsnJrnl64.exe"
+$script:usnJrnlBin = "$tools\ExtractUsnJrnl\ExtractUsnJrnl-master\usnjrnl.bin"
+$script:sysmon64 = "$tools\sysmon\Sysmon64.exe"
+$script:errLog = "$coreDir\errors.txt"
+
+# --------------------------------- [ Main ] ---------------------------------
 
 #Requires -RunAsAdministrator 
-$ErrorActionPreference = "SilentlyContinue"
+$ErrorActionPreference = "SilentlyContinue"  
 
-$isRules = Get-ChildItem -Path HKLM:\SYSTEM\CurrentControlSet\Services -Recurse -Include 'Parameters' | 
-           Where-Object { $_.Property -contains 'Rules' }
-if ($isRules -ne $null) {
-    Write-Host "[>] Sysmon detected" -Fore Green 
-    $clearSysmon = Read-Host "[?] Clear sysmon logs before starting? [y/n]" 
-    if ($clearSysmon -eq 'y') {
-        wevtutil cl "Microsoft-Windows-Sysmon/Operational"
-    }
-}
-               
-Kill-Edge
+Check-FirstRun
+Check-Sysmon 
+Kill-Edge 
 
 Write-Host "`n[>] Exporting first round of baselines.." -Fore Green
 $stampOne = Get-Date -Format "yyyyMMdd_HHmmss"
-$blDirOne = New-Item -Path "$PSScriptRoot\baselines_$stampOne" -ItemType Directory
+$blDirOne = "$coreDir\baselines_$stampOne"
+New-Item -Path $blDirOne -ItemType Directory | Out-Null
 Export-Baselines $blDirOne
 
-$copiedFilesOutputDir = "$PSScriptRoot\copied_files"
-$sieveOutputDir = "$PSScriptRoot\sieve_output"
-if (-not(Test-Path $copiedFilesOutputDir)) { New-Item -Path $copiedFilesOutputDir -ItemType Directory | Out-Null }
-if (-not(Test-Path $sieveOutputDir)) { New-Item -Path $sieveOutputDir -ItemType Directory | Out-Null }
+Read-Host "`n[+] Hit any key to start processes monitoring`n"
 
-Check-NewProcs
+Monitor-CreationEvents
+
 Write-Host "[>] Process monitoring stopped!" -Fore Cyan 
-Read-Host "`n[+] Hit any key to run the second round of baselines"
+Read-Host "`n[+] Hit any key to run the second round of baselines`n"
 
 Write-Host "[>] Exporting second round of baselines.." -Fore Green
 $stampTwo = Get-Date -Format "yyyyMMdd_HHmmss"
-$blDirTwo = New-Item -Path "$PSScriptRoot\baselines_$stampTwo" -ItemType Directory
+$blDirTwo = "$coreDir\baselines_$stampTwo"
+New-Item -Path $blDirTwo -ItemType Directory | Out-Null
 Export-Baselines $blDirTwo
-
-$stamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$reportPath = New-Item -Path "$PSScriptRoot\report_$stamp.txt" -ItemType File
-New-Item -Path $reportPath -ItemType File
 
 Write-Host "[>] Printing results..`n" -Fore Green
 Compare-Baselines $blDirOne $blDirTwo $reportPath
-
-
