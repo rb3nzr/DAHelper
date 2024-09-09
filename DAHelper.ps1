@@ -283,29 +283,29 @@ function Export-Baselines {
     PROCESS {
         <#
         Write-Host "    [>] Getting streams.." -Fore Magenta
-		$streams = Get-ChildItem -Path C:\ -Recurse -Force |
-					ForEach-Object { Get-Item -Path $_.FullName -Stream * } |
-					Where-Object { ($_.Stream -notlike "*DATA") -and ($_.Stream -ne "Zone.Identifier") }
-							
-		$streamResults = @()
-		foreach ($stream in $streams) { 
-			$file = Get-Item -Path $stream.FileName
-			$content = Get-Content -Path $stream.FileName -Stream $stream.Stream 
-			$streamResults += [PSCustomObject]@{
-				File = $file 
-				StreamContent = $content 
-			}
+	$streams = Get-ChildItem -Path C:\ -Recurse -Force |
+				ForEach-Object { Get-Item -Path $_.FullName -Stream * } |
+				Where-Object { ($_.Stream -notlike "*DATA") -and ($_.Stream -ne "Zone.Identifier") }
+						
+	$streamResults = @()
+	foreach ($stream in $streams) { 
+		$file = Get-Item -Path $stream.FileName
+		$content = Get-Content -Path $stream.FileName -Stream $stream.Stream 
+		$streamResults += [PSCustomObject]@{
+			File = $file 
+			StreamContent = $content 
 		}
-		$streamResults | Export-Csv -Path "$blDirectory\Streams.csv" -NoTypeInformation
+	}
+	$streamResults | Export-Csv -Path "$blDirectory\Streams.csv" -NoTypeInformation
         #>
-		Write-Host "    [>] Getting files.." -Fore Magenta
-		Get-ChildItem -Path C:\Windows -Recurse -Force | 
-			Where-Object { $_.FullName -notlike '*\System32\*' -and $_.FullName -notlike '*\SysWOW64\*' -and $_.FullName -notlike '*\WinSxS\*' } | 
-			Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -NoTypeInformation
-			
-		Get-ChildItem -Path C:\ -Force | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
-		Get-ChildItem -Path "C:\Program Files" -Recurse | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
-		Get-ChildItem -Path "C:\Program Files (x86)" -Recurse | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
+	Write-Host "    [>] Getting files.." -Fore Magenta
+	Get-ChildItem -Path C:\Windows -Recurse -Force | 
+		Where-Object { $_.FullName -notlike '*\System32\*' -and $_.FullName -notlike '*\SysWOW64\*' -and $_.FullName -notlike '*\WinSxS\*' } | 
+		Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -NoTypeInformation
+		
+	Get-ChildItem -Path C:\ -Force | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
+	Get-ChildItem -Path "C:\Program Files" -Recurse | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
+	Get-ChildItem -Path "C:\Program Files (x86)" -Recurse | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
 
         Write-Host "    [>] Getting COM bin file hashes.." -Fore Magenta 
         Get-COMHashes $blDirectory
@@ -492,7 +492,6 @@ function Export-Baselines {
         
         Write-Host "    [>] Getting sysmon events.." -Fore Magenta
         Extract-Sysmon $blDirectory
-        
     }
 
     END {
