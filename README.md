@@ -1,5 +1,4 @@
-## About
-DAHelper is a script that I put together to run with procmon, regshot etc., for initial dynamic analysis. 
+DAHelper is a script that I put together to run with procmon, regshot etc., for initial dynamic analysis.
 
 ### Actions
 + Sets a series of baselines.
