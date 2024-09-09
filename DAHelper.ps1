@@ -1,18 +1,12 @@
 <#
-.SYNOPSIS
-Dynamic malware analysis helper script.
-
 .DESCRIPTION
-- Gets needed tools.
-- Sets up sysmon with a trace config.
-- Sets a series of baselines.
-    - Creates a WMI event to monitor newly created processes.
-        - Prints out modules.
-    - Creates filesystem watcher events.
-        - Copies created files to script root.
-    - Runs pe-sieve over all newly created processes.
-- Sets a second series of baselines
-- Checks for diffs between baselines and prints/logs results.
+[+] Sets a series of baselines.
+[+] Creates a WMI event to monitor newly created processes.
+    -> Runs pe-sieve over all newly created processes.
+[+] Creates filesystem watcher events.
+    -> Copies created files to a directory.
+[+] Sets a second series of baselines
+[+] Checks for diffs between baselines, prints and logs results.
 
 .LINK
 Tools used:
@@ -21,12 +15,44 @@ Tools used:
 - https://github.com/EricZimmerman/MFTECmd
 
 .NOTES 
-- If hitting [Enter] once doesn't trigger the closing of events and the 
-start of the second round of baselines, spam [Enter] a few more times.
-- If using without network connection, make a copy of these tools and drop
-in script root. Match the directory structure at the bottom of the script, 
-or edit the paths. 
+[!] If hitting [Enter] once doesn't trigger the closing of events and the 
+start of the second round of baselines, hit [Enter] again.
+
+[!] Option given on first run to download tools and setup sysmon with a trace config.
+If using without network connection, make a copy of the tools
+and match or change the paths at the bottom of the script.
+
+.USAGE 
+[>] ./DAHelper.ps1 [command] <args>
+
+[Ex] ./DAHelper.ps1 Run-All
+[Ex] ./DAHelper.ps1 Compare C:\Temp\baselines_<time> C:\Temp\baselines_<time>
+
+.OPTIONS
+[Run-All]
+\__ Runs everything in the script
+\__ Baselines > Watchers/Process Monitoring > Baselines > Compare
+
+[Watch]
+\__ Starts up the only the process monitoring and file creation functions
+
+[Single] <OutputPath>
+\__ Runs a single baseline set
+
+[Compare] <Dir 1> <Dir 2>
+\__ Compares two previously exported baseline sets
+
+[Help] Print help
 #>
+
+param(
+    [Parameter(Position=0)]
+    [string]$command,
+    [Parameter(Position=1)]
+    [string]$argPathOne,
+    [Parameter(Position=2)]
+    [string]$argPathTwo
+)
 
 $compareBaselines = @"
 using System;
@@ -84,7 +110,6 @@ public class CompareBaselines
 "@
 
 function Compare-BaseLines {
-    [CmdletBinding()]
     Param(
         [Parameter(Position=0, Mandatory=$true)]
         [string]$blDirOne,
@@ -115,8 +140,8 @@ function Compare-BaseLines {
                     '^Addresses'        { 'Addresses' }
                     '^BTJobs'           { 'Background Intelligent Transfer Jobs' }
                     '^Certs'            { 'Certificates' }
-                    '^InProcSrv'        { 'InProcServer32' }
-                    '^LocalSrv'         { 'LocalServer32'}
+                    '^COMexe'           { 'COM exe' }
+                    '^COMdll'           { 'COM dll'}
                     '^DnsCache'         { 'DNS Cache' }
                     '^DLILCOM'          { 'Disabled LowIL Isolation COM' }
                     '^Drivers'          { 'Drivers' }
@@ -245,10 +270,8 @@ public class Kernel32 {
 "@
 
 function Export-Baselines {
-
-    [CmdletBinding()]
     param (
-        [Parameter(Position=0,Mandatory=$true)]
+        [Parameter(Position=0)]
         [string]$blDirectory
     )
 
@@ -260,104 +283,39 @@ function Export-Baselines {
     PROCESS {
         <#
         Write-Host "    [>] Getting streams.." -Fore Magenta
-        $streamJob = Start-Job -ArgumentList $blDirectory -ScriptBlock { 
-            param ($blDirectory)
-            $streams = Get-ChildItem -Path 'C:\' -Recurse -Force -PipelineVariable FullName |
-                       ForEach-Object { Get-Item $_.FullName -Stream * } | 
-                       Where-Object { ($_.Stream -notlike "*DATA") -and ($_.Stream -ne "Zone.Identifier")} 
-        
-            $streamResults = @()
-            foreach ($stream in $streams) { 
-                $file = Get-Item -Path $stream.FileName
-                $content = Get-Content -Path $stream.FileName -Stream $stream.Stream 
-                $streamResults += [PSCustomObject]@{
-                    File = $file 
-                    StreamContent = $content 
-                }
-            }
-            $streamResults | Export-Csv -Path "$blDirectory\Streams.csv" -NoTypeInformation
-        }#>
-        
-        Write-Host "    [>] Getting files.." -Fore Magenta
-        $fileSystemJob = Start-Job -ArgumentList $blDirectory -ScriptBlock { 
-            param ($blDirectory)
-            Get-ChildItem -Path C:\Windows -Recurse -Force | 
-                Where-Object { $_.FullName -notlike '*\System32\*' -and $_.FullName -notlike '*\SysWOW64\*' -and $_.FullName -notlike '*\WinSxS\*' } | 
-                Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -NoTypeInformation
-            
-            Get-ChildItem -Path C:\ -Force | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
-            Get-ChildItem -Path "C:\Program Files" -Recurse | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
-            Get-ChildItem -Path "C:\Program Files (x86)" -Recurse | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
-        }
+		$streams = Get-ChildItem -Path C:\ -Recurse -Force |
+					ForEach-Object { Get-Item -Path $_.FullName -Stream * } |
+					Where-Object { ($_.Stream -notlike "*DATA") -and ($_.Stream -ne "Zone.Identifier") }
+							
+		$streamResults = @()
+		foreach ($stream in $streams) { 
+			$file = Get-Item -Path $stream.FileName
+			$content = Get-Content -Path $stream.FileName -Stream $stream.Stream 
+			$streamResults += [PSCustomObject]@{
+				File = $file 
+				StreamContent = $content 
+			}
+		}
+		$streamResults | Export-Csv -Path "$blDirectory\Streams.csv" -NoTypeInformation
+        #>
+		Write-Host "    [>] Getting files.." -Fore Magenta
+		Get-ChildItem -Path C:\Windows -Recurse -Force | 
+			Where-Object { $_.FullName -notlike '*\System32\*' -and $_.FullName -notlike '*\SysWOW64\*' -and $_.FullName -notlike '*\WinSxS\*' } | 
+			Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -NoTypeInformation
+			
+		Get-ChildItem -Path C:\ -Force | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
+		Get-ChildItem -Path "C:\Program Files" -Recurse | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
+		Get-ChildItem -Path "C:\Program Files (x86)" -Recurse | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
 
-        Write-Host "    [>] Getting InProcServer32.." -Fore Magenta 
-        $inprocServerJob = Start-Job -ArgumentList $blDirectory -ScriptBlock {
-            param ($blDirectory)
-            $hkcrCLSID = "Registry::HKEY_CLASSES_ROOT\CLSID"
-            $clsidKeys = Get-ChildItem -Path $hkcrCLSID
-            foreach ($key in $clsidKeys) {
-                $inprocServer32Path = "None"
-                $fileHash = "None"
-
-                try {
-                    $inprocServer32RegistryPath = "$($key.PSPath)\InprocServer32"
-                    $inprocServer32Key = Get-ItemProperty -Path $inprocServer32RegistryPath
-                    $inprocServer32Path = $inprocServer32Key."(default)"
-
-                    if ($inprocServer32Path -ne $null -and $inprocServer32Path -ne "") {
-                        $fileHash = (Get-FileHash -Path $inprocServer32Path -Algorithm SHA256).Hash
-                    }
-                } catch {
-                    $errMsg = "[Error] $($_.Exception.Message)"
-                    Add-Content -Path -Path $errorLog -Value $errMsg
-                }
-
-                $item = [PSCustomObject]@{
-                    FileHash       = $fileHash
-                    InprocServer32 = $inprocServer32Path
-                    CLSID          = $key.PSChildName  
-                }
-                $item | Export-Csv -Path "$blDirectory\InProcSrv.csv" -Append -NoTypeInformation -Encoding utf8
-            }
-        }
-
-        <#Write-Host "    [>] Getting LocalServer32.." -Fore Magenta 
-        $localServerJob = Start-Job -ArgumentList $blDirectory -ScriptBlock {
-            param ($blDirectory)
-            $hkcrCLSID = "Registry::HKEY_CLASSES_ROOT\CLSID"
-            $clsidKeys = Get-ChildItem -Path $hkcrCLSID
-            foreach ($key in $clsidKeys) {
-                $localServer32Path = "None"
-                $fileHash = "None"
-
-                try {
-                    $localServer32RegistryPath = "$($key.PSPath)\LocalServer32"
-                    $localServer32Key = Get-ItemProperty -Path $localServer32RegistryPath
-                    $localServer32Path = $localServer32Key."(default)"
-
-                    if ($localServer32Path -ne $null -and $localServer32Path -ne "") {
-                        $fileHash = (Get-FileHash -Path $localServer32Path -Algorithm SHA256).Hash
-                    }
-                } catch {
-                    $errMsg = "[Error] $($_.Exception.Message)"
-                    Add-Content -Path -Path $errorLog -Value $errMsg
-                }
-
-                $item = [PSCustomObject]@{
-                    FileHash       = $fileHash
-                    LocalServer32  = $localServer32Path
-                    CLSID          = $key.PSChildName  
-                }
-                $item | Export-Csv -Path "$blDirectory\LocalSrv.csv" -Append -NoTypeInformation -Encoding utf8
-            }
-        }#>
+        Write-Host "    [>] Getting COM bin file hashes.." -Fore Magenta 
+        Get-COMHashes $blDirectory
         
         Write-Host "    [>] Getting USNJournal.." -Fore Magenta
         Extract-USNJournal $blDirectory
         
         Write-Host "    [>] Getting root thumbprints and certs.." -Fore Magenta
         Get-RootThumprints | Export-Csv -Path "$blDirectory\RootTPs.csv" -NoTypeInformation
-
+		#>
         Get-ChildItem -Path cert:\ -Recurse | Select-Object ThumbPrint, FriendlyName, Subject | 
             Export-Csv -Path "$blDirectory\Certs.csv" -NoTypeInformation
 
@@ -366,7 +324,7 @@ function Export-Baselines {
             Export-Csv -Path "$blDirectory\Processes.csv" -NoTypeInformation
         
         Get-Addresses | Export-Csv -Path "$blDirectory\Addresses.csv" -NoTypeInformation 
-
+        
         Write-Host "    [>] Getting network information.." -Fore Magenta
         Get-NetTCPConnection | Select-Object RemoteAddress, RemotePort, LocalAddress, LocalPort, OwningProcess, `
             @{ Name="Path"; Expression={ (Get-Process -Id $_.OwningProcess).Path } } | 
@@ -494,10 +452,10 @@ function Export-Baselines {
 
         (Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters).NullSessionShares |
             Export-Csv -Path "$blDirectory\NSShares.csv" -NoTypeInformation
-
+        
         Write-Host "    [>] Getting .lnks.." -Fore Magenta
         $wScript = New-Object -ComObject WScript.Shell 
-        $lnks = Get-ChildItem -Path "$env:APPDATA" -File -Recurse | Where-Object {$_.extension -in ".lnk"} | select-Object * 
+        $lnks = Get-ChildItem -Path "C:\Users\benzr\Desktop" -File -Recurse | Where-Object { $_.extension -in ".lnk" } | select-Object * 
         foreach ($lnk in $lnks) {
             $target = $wScript.CreateShortcut($lnk.FullName).TargetPath 
             if ($target -notlike $("$PSScriptRoot\*")) {
@@ -509,7 +467,7 @@ function Export-Baselines {
             }
             $link | Export-Csv -Path "$blDirectory\Links.csv" -Append -NoTypeInformation
         }
-
+        
         Write-Host "    [>] Getting DisableLowILProcessIsolation COM objects.." -Fore Magenta
         try {
             $hkcrCLSID = "Registry::HKEY_CLASSES_ROOT\CLSID"
@@ -528,37 +486,39 @@ function Export-Baselines {
                 }
             }
         } catch {
-            $errMsg = "[Error] $($_.Exception.Message)"
-            Add-Content -Path -Path $errorLog -Value $errMsg
+            $errMsg = "[X] $($_.Exception.Message)"
+            Write-Host $errMsg -Fore Red
         }
-                    
+        
         Write-Host "    [>] Getting sysmon events.." -Fore Magenta
         Extract-Sysmon $blDirectory
-    
-        Write-Host "[>] Waiting for jobs.." -Fore Green
-        $running = @(Get-Job | Where-Object { $_.State -eq 'Running' })
-        $running | Wait-Job -Any | Out-Null
+        
     }
 
     END {
-        Get-Job | Remove-Job
         Write-Host "[>] Baselines exported!" -Fore Cyan
     }
 }
 
+# --------------------------------- [ Monitoring Functions ] ---------------------------------
+
 function Monitor-CreationEvents {
 <#
 .DESCRIPTION
-Starts a file system watcher for temp directories; copies created files to script root.
-Registers a WMI event to monitor new processes that open.
-Runs pe-sieve on the process and checks it's loaded modules.
+[+] Starts a file system watcher for temp directories; copies created files to script root.
+[+] Registers a WMI event to monitor new processes that open.
+[+] Runs pe-sieve on the process and checks it's loaded modules.
 .NOTES 
 - Edit the exclusions in the event query.
-- Edit pe-sieve switches.
+- Edit pe-sieve args.
 #>
+    param (
+        [Parameter(Position=0)]
+        [string]$resultsDir
+    )
 
     BEGIN {
-        if (-not (Test-Path -Path $peSieve)) {
+        if (-not(Test-Path -Path "$PSScriptRoot\Tools\pe-sieve64.exe")) {
             Write-Warning "[!] pe-sieve not found, skipping proc watch" 
             return 
         }
@@ -583,7 +543,8 @@ Runs pe-sieve on the process and checks it's loaded modules.
             $process = $event.SourceEventArgs.NewEvent.TargetInstance
 
             Write-Host "[>] New process started: $($process.Name), PID: $($process.ProcessId)" -Fore Cyan
-            cmd /c "$PSScriptRoot\Tools\pe-sieve64.exe" /pid $process.ProcessId /dir "$PSScriptRoot\sieve_output" /quiet /iat 3 /obfusc 3 /shellc 3 /threads /dmode 3 /imp 1 /minidmp
+            cmd /c "$PSScriptRoot\Tools\pe-sieve64.exe" /pid $process.ProcessId /dir "$PSScriptRoot\sieve_output" `
+                   /quiet /iat 3 /obfusc 3 /shellc 3 /threads /dmode 3 /imp 1 /minidmp
 
             $modules = Get-Process -id $process.ProcessId | Select-Object -ExpandProperty Modules | 
                 Select-Object ModuleName, FileName, Company
@@ -612,8 +573,8 @@ Runs pe-sieve on the process and checks it's loaded modules.
     END {
         Get-EventSubscriber | Unregister-Event
         Get-Job | Remove-Job
-        Move-Item -Path "$PSScriptRoot\sieve_output" -Destination $coreDir -Force 
-        Move-Item -Path "$PSScriptRoot\copied_from_create" -Destination $coreDir -Force 
+        Move-Item -Path "$PSScriptRoot\sieve_output" -Destination $resultsDir -Force 
+        Move-Item -Path "$PSScriptRoot\copied_files" -Destination $resultsDir -Force 
     }
 }
 
@@ -647,7 +608,7 @@ function Copy-OnCreate {
 
         Write-Host "[>] File created: '$fullPath'" -Fore Magenta
         try {
-            Copy-Item -Path $fullPath -Destination "$PSScriptRoot\copied_from_create"
+            Copy-Item -Path $fullPath -Destination "$PSScriptRoot\copied_files"
             Write-Host "    [+] Copy success" -Fore Green 
         } catch {
             Write-Host "    [!] Failed copy - $_" -Fore DarkRed
@@ -660,14 +621,65 @@ function Copy-OnCreate {
     Register-ObjectEvent $programDataFSW Created -SourceIdentifier ProgramDataFileCreated -Action $action
 }
 
+# --------------------------------- [ Functions for Export-Baselines ] ---------------------------------
+
+function Get-COMHashes {
+	param (
+		[Parameter(Position=0)]
+		[string]$blDirectory
+	)
+	
+    $clsidDLL = reg query HKLM\SOFTWARE\Classes\CLSID\ /s /f ".dll" | 
+        ForEach-Object { if ($_ -match "([A-Z]:\\.*\.(dll))") { $matches[1] }}
+    
+    $clsidEXE = reg query HKLM\SOFTWARE\Classes\CLSID\ /s /f ".exe" |
+        ForEach-Object { if ($_ -match "([A-Z]:\\.*\.(exe))") { $matches[1] }}
+
+    $clsidDLLResult = @()
+    foreach ($path in $clsidDLL) {
+        if (Test-Path $path) {
+            try {
+                $fileHash = (Get-FileHash -Path $path -Algorithm SHA256).Hash
+            } catch {
+                $fileHash = "Error calculating hash"
+            }
+        } else {
+            $fileHash = "File not found"
+        }
+        $clsidDLLResult += [pscustomobject]@{
+            FileHash = $fileHash
+            FilePath = $path
+        }
+    }
+    $clsidDLLResult | Export-Csv -Path "$blDirectory\COMdll.csv" -NoTypeInformation
+
+    $clsidEXEResult = @()
+    foreach ($path in $clsidEXE) {
+        if (Test-Path $path) {
+            try {
+                $fileHash = (Get-FileHash -Path $path -Algorithm SHA256).Hash
+            } catch {
+                $fileHash = "Error calculating hash"
+            }
+        } else {
+            $fileHash = "File not found"
+        }
+        $clsidEXEResult += [pscustomobject]@{
+            FileHash = $fileHash
+            FilePath = $path
+        }
+    }
+    $clsidEXEResult | Export-Csv -Path "$blDirectory\COMexe.csv" -NoTypeInformation
+}
+
 function Extract-USNJournal {
-    [CmdletBinding()]
     param (
-        [Parameter(Position=0,Mandatory=$true)]
+        [Parameter(Position=0)]
         [string]$blDirectory
     )
-
-    $dotNetRuntimes = dotnet --list-runtimes
+	
+	$dotnetExec = "C:\Program Files\dotnet\dotnet.exe"
+    $dotNetRuntimes = & $dotnetExec --list-runtimes
     $dn6Installed = $dotNetRuntimes -like "*Microsoft.NETCore.App 6.*"
     if (-not $dn6Installed) {
         try {
@@ -696,7 +708,7 @@ function Extract-USNJournal {
 
 function Extract-Sysmon {
     param (
-        [Parameter(Position=0,Mandatory=$true)]
+        [Parameter(Position=0)]
         [string]$blDirectory
     )
     
@@ -784,7 +796,7 @@ function Get-Addresses {
                 }
             }
 
-            $asciiContent = Get-Content -Encoding UTF7 -Path $path 
+            $asciiContent = Get-Content -Encoding UTF7 -Path $path | Out-Null
             if ($asciiContent) {
                 $matches = $asciiExp.Matches($asciiContent).Value
                 foreach ($match in $matches) {
@@ -811,8 +823,8 @@ function Get-Addresses {
             }
         }
     } catch {
-        $errMsg = "[Error] $($_.Exception.Message)"
-        Add-Content -Path -Path $errorLog -Value $errMsg
+        $errMsg = "[X] $($_.Exception.Message)"
+        Write-Host $errMsg -Fore Red
     }
     return $results
 }
@@ -852,36 +864,52 @@ function Get-RootThumprints {
     return $rootThumbprints
 }
 
+# --------------------------------- [ Helper Functions ] ---------------------------------
+
 function Get-Tools {
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    
-        $mfteCmd = "https://f001.backblazeb2.com/file/EricZimmermanTools/net6/MFTECmd.zip"
-        $peSieve = "https://github.com/hasherezade/pe-sieve/releases/download/v0.3.9/pe-sieve64.exe"
-        $exUsnJrnl = "https://github.com/jschicht/ExtractUsnJrnl/archive/refs/heads/master.zip"
-        $sysmon = "https://download.sysinternals.com/files/Sysmon.zip"
-        $smTraceConfig = "https://github.com/bakedmuffinman/Neo23x0-sysmon-config/archive/refs/heads/main.zip"
         
-        Invoke-WebRequest -Uri $mfteCmd -OutFile "$Tools\MFTECmd.zip"
-        Invoke-WebRequest -Uri $peSieve -OutFile "$Tools\pe-sieve64.exe"
-        Invoke-WebRequest -Uri $exUsnJrnl -OutFile "$Tools\ExtractUsnJrnl.zip"
-        Invoke-WebRequest -Uri $smTraceConfig -OutFile "$Tools\sysmon-configs.zip"
-        Invoke-WebRequest -Uri $sysmon -OutFile "$Tools\sysmon.zip"
-        
-        Expand-Archive -Path "$Tools\MFTECmd.zip" -Destination "$Tools\MFTECmd" -Force 
-        Expand-Archive -Path "$Tools\ExtractUsnJrnl.zip" -Destination "$Tools\ExtractUsnJrnl" -Force 
-        Expand-Archive -Path "$Tools\sysmon.zip" -Destination "$Tools\sysmon" -Force 
-        Expand-Archive -Path "$Tools\sysmon-configs.zip" -Destination "$Tools\sysmon-configs" -Force
-        
-        Remove-Item "$Tools\MFTECmd.zip" -Force
-        Remove-Item "$Tools\ExtractUsnJrnl.zip" -Force 
-        Remove-Item "$Tools\sysmon.zip" -Force
-        Remove-Item "$Tools\sysmon-configs.zip" -Force
+        function Get-LatestReleaseAssetUrl {
+            param (
+                [string]$repo,
+                [string]$assetPattern
+            )
+            $releaseInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" `
+                                             -Headers @{ "User-Agent" = "PowerShell" }
+            $asset = $releaseInfo.assets | Where-Object { $_.name -like $assetPattern }
+            return $asset.browser_download_url
+        }
 
-        Write-Host "[>] Tools downloaded" -Fore Green 
+        $mfteCmdUrl = "https://download.mikestammer.com/MFTECmd.zip"
+        Invoke-WebRequest -Uri $mfteCmdUrl -OutFile "$tools\MFTECmd.zip"
+
+        $peSieveUrl = Get-LatestReleaseAssetUrl "hasherezade/pe-sieve" "*pe-sieve64.exe"
+        Invoke-WebRequest -Uri $peSieveUrl -OutFile "$tools\pe-sieve64.exe"
+
+        $exUsnJrnlUrl = "https://github.com/jschicht/ExtractUsnJrnl/archive/refs/heads/master.zip"
+        Invoke-WebRequest -Uri $exUsnJrnlUrl -OutFile "$tools\ExtractUsnJrnl.zip"
+
+        $sysmonUrl = "https://download.sysinternals.com/files/Sysmon.zip"
+        Invoke-WebRequest -Uri $sysmonUrl -OutFile "$tools\sysmon.zip"
+
+        $smTraceConfigUrl = "https://github.com/bakedmuffinman/Neo23x0-sysmon-config/archive/refs/heads/main.zip"
+        Invoke-WebRequest -Uri $smTraceConfigUrl -OutFile "$tools\sysmon-configs.zip"
+
+        Expand-Archive -Path "$tools\MFTECmd.zip" -Destination "$tools\MFTECmd" -Force
+        Expand-Archive -Path "$tools\ExtractUsnJrnl.zip" -Destination "$tools\ExtractUsnJrnl" -Force 
+        Expand-Archive -Path "$tools\sysmon.zip" -Destination "$tools\sysmon" -Force 
+        Expand-Archive -Path "$tools\sysmon-configs.zip" -Destination "$tools\sysmon-configs" -Force
+
+        Remove-Item "$tools\MFTECmd.zip" -Force
+        Remove-Item "$tools\ExtractUsnJrnl.zip" -Force 
+        Remove-Item "$tools\sysmon.zip" -Force
+        Remove-Item "$tools\sysmon-configs.zip" -Force
+
+        Write-Host "[>] Tools downloaded" -Fore Green
     } catch {
-        $errMsg = "[Error] $($_.Exception.Message)"
-        Add-Content -Path -Path $errorLog -Value $errMsg
+        $errMsg = "[X] $($_.Exception.Message)"
+        Write-Host $errMsg -Fore Red
     }
 }
 
@@ -945,56 +973,209 @@ function Check-FirstRun {
     }
 }
 
-# --------------------------------- [ Directory ] ---------------------------------
+function Check-EventsAndJobs {
+    $subscribers = Get-EventSubscriber 
+    $jobs = Get-Job 
+    
+    if ($subscribers -gt 0) {
+        Write-Host "[>] Found event subscribers: " -Fore Yellow
+        $subscribers | fl *
 
-$stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+        $unregister = Read-Host "[?] Unregister all? [y/n]"
+        if ($unregister -eq 'y') {
+            $subscribers | ForEach-Object { 
+                Unregister-Event -SubscriptionId $_.SubscriptionId
+            }
+        }
+    }
 
-$script:coreDir = "$PSScriptRoot\Results_$stamp"
+    if ($jobs.Count -gt 0) {
+        Write-Host "[>] Found open jobs" -Fore Yellow
+        $jobs | fl *
+
+        $remove = Read-Host "[?] Remove all? [y/n]"
+        if ($remove -eq 'y') {
+            $jobs | ForEach-Object { Remove-Job -Id $_.Id }
+        }
+    }
+}
+
+function Print-Help {
+    Write-Host "`n  [DAHelper Options]  `n" -Fore Cyan
+
+    Write-Host "[Run-All]" -Fore Green
+    Write-Host "\__ Runs everything in the script" -Fore Magenta
+    Write-Host "\__ Baselines > Watchers/Process Monitoring > Baselines > Compare`n" -Fore Magenta
+
+    Write-Host "[Watch]" -Fore Green
+    Write-Host "\__ Starts up the only the process monitoring and file creation functions`n" -Fore Magenta
+
+    Write-Host "[Single] <OutputPath>" -Fore Green
+    Write-Host "\__ Runs a single baseline set`n" -Fore Magenta
+
+    Write-Host "[Compare] <Dir 1> <Dir 2>" -Fore Green
+    Write-Host "\__ Compares two previously exported baseline sets`n" -Fore Magenta
+
+    Write-Host "[Help] To print this menu again`n" -Fore Green
+
+    Write-Host "Example: .\DAHelper.ps1 Compare .\baselines_<time> .\baslines_<time>`n" -Fore Cyan
+
+    Write-Host "Prompts given on a first run:" -Fore Yellow
+    Write-Host "-- Option to download tools" -Fore Cyan
+    Write-Host "-- Option to install sysmon with a trace config" -Fore Cyan
+    Write-Host "-- Option to kill all MS Edge processes`n" -Fore Cyan
+}
+
+# --------------------------------- [ Tool Paths ] ---------------------------------
+
 $script:tools = "$PSScriptRoot\Tools"
-$sieveOutput = "$PSScriptRoot\sieve_output"
-$copiedFiles = "$PSScriptRoot\copied_from_create"
-$reportPath = "$coreDir\report.txt"
-
-New-Item -Path $coreDir -ItemType Directory | Out-Null 
-New-Item -Path $sieveOutput -ItemType Directory | Out-Null
-New-Item -Path $copiedFiles -ItemType Directory | Out-Null 
-New-Item -Path $reportPath -ItemType File | Out-Null 
 if (-not(Test-Path $tools)) { New-Item -Path $tools -ItemType Directory | Out-Null }
 
+$script:sieveOutput = "$PSScriptRoot\sieve_output"
+$script:copiedFiles = "$PSScriptRoot\copied_files"
 $script:sysmonConfig = "$tools\sysmon-configs\Neo23x0-sysmon-config-main\sysmonconfig-trace.xml"
 $script:mfteCmd = "$tools\MFTECmd\MFTECmd.exe"
 $script:exUsnJrnl = "$tools\ExtractUsnJrnl\ExtractUsnJrnl-master\ExtractUsnJrnl64.exe"
 $script:usnJrnlBin = "$tools\ExtractUsnJrnl\ExtractUsnJrnl-master\usnjrnl.bin"
 $script:sysmon64 = "$tools\sysmon\Sysmon64.exe"
-$script:errLog = "$coreDir\errors.txt"
 
 # --------------------------------- [ Main ] ---------------------------------
+
+function Main {
+    param (
+        [Parameter(Position=0)]
+        [string]$command,
+        [Parameter(Position=1)]
+        [string]$argPathOne,
+        [Parameter(Position=2)]
+        [string]$argPathTwo
+    )
+
+    if (-not $command) {
+        Write-Host "[X] No commands provided" -Fore Red 
+        Print-Help 
+        exit 
+    }
+
+    switch ($command.ToLower()) {
+        "run-all" {
+            Check-FirstRun
+            Check-EventsAndJobs
+            Check-Sysmon 
+            Kill-Edge  
+
+            $stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+            $resultsDir = "Results_$stamp"
+            $reportPath = "results_$stamp.txt"
+
+            New-Item -Path $sieveOutput -ItemType Directory | Out-Null
+            New-Item -Path $copiedFiles -ItemType Directory | Out-Null
+            New-Item -Path $resultsDir -ItemType Directory | Out-Null 
+            New-Item -Path $reportPath -ItemType File | Out-Null 
+            
+            Write-Host "`n[>] Exporting first round of baselines.." -Fore Green
+
+            $stampOne = Get-Date -Format "yyyyMMdd_HHmmss"
+            $blDirOne = "baselines_$stampOne"
+            New-Item -Path $blDirOne -ItemType Directory | Out-Null
+            Export-Baselines $blDirOne
+
+            Read-Host "`n[+] Hit any key to start processes monitoring`n"
+
+            Monitor-CreationEvents $resultsDir
+
+            Write-Host "[>] Process monitoring stopped!" -Fore Cyan 
+            Read-Host "`n[+] Hit any key to run the second round of baselines`n"
+            Write-Host "[>] Exporting second round of baselines.." -Fore Green
+
+            $stampTwo = Get-Date -Format "yyyyMMdd_HHmmss"
+            $blDirTwo = "baselines_$stampTwo"
+            New-Item -Path $blDirTwo -ItemType Directory | Out-Null
+            Export-Baselines $blDirTwo
+
+            Write-Host "[>] Printing results..`n" -Fore Green
+            Compare-Baselines $blDirOne $blDirTwo $reportPath
+            Move-Item -Path $reportPath -Destination $resultsDir -Force
+            Move-Item -Path $blDirOne -Destination $resultsDir -Force 
+            Move-Item -Path $blDirTwo -Destination $resultsDir -Force
+            Write-Host "[>] Results exported to $($resultsDir)" -Fore Green
+        }
+        "watch" {
+            Check-FirstRun
+            Check-EventsAndJobs
+            Kill-Edge
+
+            $stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+            New-Item -Path $resultsDir -ItemType Directory | Out-Null
+
+            New-Item -Path $sieveOutput -ItemType Directory | Out-Null 
+            New-Item -Path $copiedFile -ItemType Directory | Out-Null 
+
+            Write-Host "[>] Starting event and watchers.." -Fore Green 
+            Write-Host "[+] Hit any key to stop" -Fore Green
+            Monitor-CreationEvents $resultsDir 
+            Write-Host "[>] Results exported to $($resultsDir)" -Fore Green
+        }
+        "single" {
+            if ($argPathOne) {
+                Check-FirstRun
+                Check-EventsAndJobs 
+                Check-Sysmon 
+                Kill-Edge 
+
+                $stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+                $blDir = "$argPathOne\baselines_$stamp"
+                New-Item -Path $blDir -ItemType Directory | Out-Null
+                 
+                Write-Host "`n[>] Setting baselines.." -Fore Green
+                Export-Baselines $blDir
+                Write-Host "[>] Done!" -Fore Green
+                Write-Host "[>] Results in $($blDir)" -Fore Green
+            }
+            else {
+                Write-Host "[X] Error: Single requires the output directory path for the report`n" -Fore Red
+                Print-Help
+                exit
+            }
+        }
+        "compare" {
+            if ($argPathOne -and $argPathTwo) {
+                $stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+                $reportPath = "results_$stamp.txt"
+                New-Item -Path $reportPath -ItemType File | Out-Null 
+
+                Write-Host "[>] Starting comparisons" -Fore Green
+                Compare-Baselines $argPathOne $argPathTwo $reportPath
+            }
+            else {
+                Write-Host "[X] Error: Compare requires two baseline directory paths`n" -Fore Red
+                Print-Help
+                exit
+            }
+        }
+        "help" {
+            Print-Help
+            exit
+        }
+        default {
+            Write-Host "[X] Invalid command!`n" -Fore Red
+            Print-Help
+            exit
+        }
+    }
+}
 
 #Requires -RunAsAdministrator 
 $ErrorActionPreference = "SilentlyContinue"  
 
-Check-FirstRun
-Check-Sysmon 
-Kill-Edge 
-
-Write-Host "`n[>] Exporting first round of baselines.." -Fore Green
-$stampOne = Get-Date -Format "yyyyMMdd_HHmmss"
-$blDirOne = "$coreDir\baselines_$stampOne"
-New-Item -Path $blDirOne -ItemType Directory | Out-Null
-Export-Baselines $blDirOne
-
-Read-Host "`n[+] Hit any key to start processes monitoring`n"
-
-Monitor-CreationEvents
-
-Write-Host "[>] Process monitoring stopped!" -Fore Cyan 
-Read-Host "`n[+] Hit any key to run the second round of baselines`n"
-
-Write-Host "[>] Exporting second round of baselines.." -Fore Green
-$stampTwo = Get-Date -Format "yyyyMMdd_HHmmss"
-$blDirTwo = "$coreDir\baselines_$stampTwo"
-New-Item -Path $blDirTwo -ItemType Directory | Out-Null
-Export-Baselines $blDirTwo
-
-Write-Host "[>] Printing results..`n" -Fore Green
-Compare-Baselines $blDirOne $blDirTwo $reportPath
+switch ($true) {
+    { $argPathOne -and $argPathTwo } {
+        Main $command $argPathOne $argPathTwo
+    }
+    { $argPathOne -and -not $argPathTwo } {
+        Main $command $argPathOne
+    }
+    default {
+        Main $command
+    }
+}
