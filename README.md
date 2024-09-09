@@ -7,7 +7,7 @@ DAHelper is a script that I put together to run with procmon, regshot etc., for 
 + A second series of baselines are run.
 + Baseline files are then diffed and the results are printed/logged.
 
-Requires [pe-sieve](https://github.com/hasherezade/pe-sieve/releases), [MFTECmd](https://ericzimmerman.github.io/#!index.md), and [ExtractUsnJrnl](https://github.com/jschicht/ExtractUsnJrnl?tab=readme-ov-file) in script root. The option to download these on a first run will be given, as well as the option to install Sysmon with a trace config. If running initially without an internet connection then download these tools and match or change the paths in the script. These are not manditory and if the script does not find them the those functions will be skipped.
+Requires [pe-sieve](https://github.com/hasherezade/pe-sieve/releases), [MFTECmd](https://ericzimmerman.github.io/#!index.md), and [ExtractUsnJrnl](https://github.com/jschicht/ExtractUsnJrnl?tab=readme-ov-file) in script root. The option to download these on a first run will be given, as well as the option to install Sysmon with a trace config. If running initially without an internet connection then download these tools and match or change the paths in the script. These are not mandatory and if the script does not find them the those functions will be skipped.
 
 ### Options 
 ```
