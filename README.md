@@ -25,7 +25,5 @@ Requires [pe-sieve](https://github.com/hasherezade/pe-sieve/releases), [MFTECmd]
 \__ Compares two previously exported baseline sets
 
 [Help] To print this menu again
-
-Example: .\DAHelper.ps1 Compare .\baselines_<time> .\baslines_<time>
 ```
 
