@@ -1,12 +1,13 @@
 <#
 .DESCRIPTION
-[+] Sets a series of baselines.
-[+] Creates a WMI event to monitor newly created processes.
-    -> Runs pe-sieve over all newly created processes.
-[+] Creates filesystem watcher events.
-    -> Copies created files to a directory.
-[+] Sets a second series of baselines
-[+] Checks for diffs between baselines, prints and logs results.
+- Sets a series of baselines.
+- Creates a WMI event to monitor newly created processes
+    -> Runs pe-sieve over all newly created processes
+    -> Lists modules
+- Creates filesystem watchers for file creation events
+    -> Copies created files to a directory
+- Sets a second series of baselines
+- Checks for diffs between baselines, prints and logs results
 
 .LINK
 Tools used:
@@ -15,10 +16,7 @@ Tools used:
 - https://github.com/EricZimmerman/MFTECmd
 
 .NOTES 
-[!] If hitting [Enter] once doesn't trigger the closing of events and the 
-start of the second round of baselines, hit [Enter] again.
-
-[!] Option given on first run to download tools and setup sysmon with a trace config.
+Option given on first run to download tools and setup sysmon with a trace config.
 If using without network connection, make a copy of the tools
 and match or change the paths at the bottom of the script.
 
@@ -149,17 +147,14 @@ function Compare-BaseLines {
                     '^USNJrnl'          { 'Change Journal' }
                     '^FirewallRules'    { 'Firewall Rules' }
                     '^Files'            { 'Files' }
-                    '^FWLog'            { 'Firewall Logs' }
-                    '^Links'            { 'Links' }
+                    '^Lnks'             { 'Lnks' }
                     '^Pipes'            { 'Named Pipes' }
                     '^NSPipes'          { 'NullSession Pipes' }
                     '^NSShares'         { 'NullSession Shares' }
-                    '^PendingRenames'   { 'Pending Renames' }
                     '^Processes'        { 'Processes' }
                     '^RootTPs'          { 'Root Thumbprints' }
                     '^SchTasks'         { 'Sch Tasks' }
                     '^Services'         { 'Services' }
-                    '^Shims'            { 'Shims' }
                     '^Software'         { 'Software' }
                     '^StartUp'          { 'Start Up' }
                     '^StartUpCmd'       { 'Start Up Cmd' }
@@ -297,7 +292,7 @@ function Export-Baselines {
 		}
 	}
 	$streamResults | Export-Csv -Path "$blDirectory\Streams.csv" -NoTypeInformation
-        #>
+        
 	Write-Host "    [>] Getting files.." -Fore Magenta
 	Get-ChildItem -Path C:\Windows -Recurse -Force | 
 		Where-Object { $_.FullName -notlike '*\System32\*' -and $_.FullName -notlike '*\SysWOW64\*' -and $_.FullName -notlike '*\WinSxS\*' } | 
@@ -306,7 +301,7 @@ function Export-Baselines {
 	Get-ChildItem -Path C:\ -Force | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
 	Get-ChildItem -Path "C:\Program Files" -Recurse | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
 	Get-ChildItem -Path "C:\Program Files (x86)" -Recurse | Select-Object FullName | Export-Csv -Path "$blDirectory\Files.csv" -Append -NoTypeInformation
-
+	#>
         Write-Host "    [>] Getting COM bin file hashes.." -Fore Magenta 
         Get-COMHashes $blDirectory
         
@@ -315,25 +310,22 @@ function Export-Baselines {
         
         Write-Host "    [>] Getting root thumbprints and certs.." -Fore Magenta
         Get-RootThumprints | Export-Csv -Path "$blDirectory\RootTPs.csv" -NoTypeInformation
-		#>
+		
         Get-ChildItem -Path cert:\ -Recurse | Select-Object ThumbPrint, FriendlyName, Subject | 
             Export-Csv -Path "$blDirectory\Certs.csv" -NoTypeInformation
 
         Write-Host "    [>] Getting process information.." -Fore Magenta
         Get-CimInstance -Class Win32_Process | Select-Object ExecutablePath, ProcessId, CommandLine | 
             Export-Csv -Path "$blDirectory\Processes.csv" -NoTypeInformation
-        
+
+	Write-Host "    [>] Getting network information.." -Fore Magenta
         Get-Addresses | Export-Csv -Path "$blDirectory\Addresses.csv" -NoTypeInformation 
         
-        Write-Host "    [>] Getting network information.." -Fore Magenta
         Get-NetTCPConnection | Select-Object RemoteAddress, RemotePort, LocalAddress, LocalPort, OwningProcess, `
             @{ Name="Path"; Expression={ (Get-Process -Id $_.OwningProcess).Path } } | 
             Export-Csv -Path "$blDirectory\TcpConnections.csv" -NoTypeInformation
         
         Get-DnsClientCache | Select-Object Name, Data | Export-Csv -Path "$blDirectory\DnsCache.csv" -NoTypeInformation
-        
-        Get-Content $env:WINDIR\System32\LogFiles\Firewall\*.log | Select-String "ALLOW TCP" | out-string | 
-            Export-Csv -Path "$blDirectory\FWLog.csv" -NoTypeInformation
 
         Get-NetFirewallRule | Select-Object Name, Direction, Action | 
             Export-Csv -Path "$blDirectory\FirewallRules.csv" -NoTypeInformation
@@ -345,36 +337,24 @@ function Export-Baselines {
         Get-WmiObject -NameSpace root\Subscription -Class __EventConsumer | Select-Object __PATH, __NAMESPACE, options, ClassPath | 
             Export-Csv -Path "$blDirectory\EvtConsumers.csv" -NoTypeInformation
 
-        Write-Host "    [>] Getting pending rename operations.." -Fore Magenta
-        Get-ItemProperty ("HKLM:\System\CurrentControlSet\Control\Session Manager").FileRenameOperations | 
-            Export-Csv -Path "$blDirectory\PendingRenames.csv" -NoTypeInformation
-
         Write-Host "    [>] Getting drivers.." -Fore Magenta
-        Get-WmiObject Win32_SystemDriver | Select Name, DisplayName, PathName | 
-            Export-Csv -Path "$blDirectory\Drivers.csv" -NoTypeInformation
+        Get-WmiObject Win32_SystemDriver | Select PathName | Export-Csv -Path "$blDirectory\Drivers.csv" -NoTypeInformation
 
         Write-Host "    [>] Getting services.." -Fore Magenta
         Get-ChildItem -Path "HKLM:\System\CurrentControlSet\Services\*" | Select-Object Name | 
             Export-Csv -Path "$blDirectory\Services.csv" -NoTypeInformation
 
         Write-Host "    [>] Getting software.." -Fore Magenta
-        Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | 
+        Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" | 
             Select-Object DisplayName, Publisher, InstallLocation |
             Export-Csv -Path "$blDirectory\Software.csv" -NoTypeInformation
 
-        Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* | 
+        Get-ItemProperty "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*" | 
             Select-Object DisplayName, Publisher, InstallLocation |
             Export-Csv -Path "$blDirectory\Software.csv" -NoTypeInformation
-
-        Write-Host "    [>] Getting shims.." -Fore Magenta
-        Get-ItemProperty HKLM:"\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Custom\*" | 
-            Export-Csv "$blDirectory\Shims.csv" -NoTypeInformation
-
-        Get-ItemProperty HKLM:"\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\InstalledSDB\*" | 
-            Export-Csv "$blDirectory\Shims.csv" -Append -NoTypeInformation
 
         Write-Host "    [>] Getting scheduled tasks.." -Fore Magenta
-        Get-ScheduledTask | Select-Object TaskPath, TaskName, Source | 
+        Get-ScheduledTask | Select-Object TaskName, TaskPath, Source | 
             Export-Csv -Path "$blDirectory\SchTasks.csv" -NoTypeInformation
 
         Write-Host "    [>] Getting start up.." -Fore Magenta
@@ -382,14 +362,14 @@ function Export-Baselines {
             Select-Object PSPath | Export-Csv -Path "$blDirectory\StartUp.csv" -NoTypeInformation
 
         Get-ChildItem "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\startup" -Recurse -Attributes !Directory -Force |
-            Select-Object PSPath | Export-Csv -Path "$blDirectory\StartUp.csv" -Append -NoTypeInformation
+            Select-Object FullName | Export-Csv -Path "$blDirectory\StartUp.csv" -Append -NoTypeInformation
             
         Get-CimInstance Win32_StartupCommand | Select-Object Command, Location, Name | 
             Export-Csv -Path "$blDirectory\StartUpCmd.csv" -NoTypeInformation
 
         Write-Host "    [>] Getting accessibility features.." -Fore Magenta 
         $accessibilityFeatures = @(
-                "$env_homedrive\Program Files\Common Files\microsoft shared\ink\HID.dll"
+                "$env_homedrive\Program Files\Common Files\microsoft shared\ink\HID.dll",
                 "$env_homedrive\Windows\System32\AtBroker.exe",
                 "$env_homedrive\Windows\System32\DisplaySwitch.exe",
                 "$env_homedrive\Windows\System32\Magnify.exe",
@@ -453,20 +433,33 @@ function Export-Baselines {
         (Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters).NullSessionShares |
             Export-Csv -Path "$blDirectory\NSShares.csv" -NoTypeInformation
         
-        Write-Host "    [>] Getting .lnks.." -Fore Magenta
-        $wScript = New-Object -ComObject WScript.Shell 
-        $lnks = Get-ChildItem -Path "C:\Users\benzr\Desktop" -File -Recurse | Where-Object { $_.extension -in ".lnk" } | select-Object * 
-        foreach ($lnk in $lnks) {
-            $target = $wScript.CreateShortcut($lnk.FullName).TargetPath 
-            if ($target -notlike $("$PSScriptRoot\*")) {
-                $link = [PSCustomObject]@{
-                    TargetPath = $target
-                    LnkFile    = $lnk.FullName 
-                    WriteTime  = $lnk.LastWriteTime 
-                }
-            }
-            $link | Export-Csv -Path "$blDirectory\Links.csv" -Append -NoTypeInformation
-        }
+	Write-Host "    [>] Getting lnks.." -Fore Magenta
+	$lnkPaths = @(
+	    "$env:USERPROFILE\Desktop",
+	    "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup",
+	    "$env:APPDATA\Microsoft\Windows\Recent",
+	    "$env:PUBLIC\Desktop",
+	    "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Startup"
+	)
+	
+	$lnkResults = @()
+	$wScript = New-Object -ComObject WScript.Shell
+	foreach ($path in $lnkPaths) {
+	    try {
+	        Get-ChildItem -Path $path -Recurse -Filter *.lnk -File | ForEach-Object {
+	            $target = $wScript.CreateShortcut($_.FullName).TargetPath 
+	            $lnkResults += [PSCustomObject]@{
+	                WriteTime  = $_.LastWriteTime 
+	                TargetPath = $target 
+	                LnkFile    = $_.FullName
+	            }
+	        }
+	    } catch {
+	        Write-Warning "Failed to process path $path : $($_.Exception.Message)"
+	    }
+	}
+	
+	$lnkResults | Export-Csv -Path "$blDirectory\Lnks.csv" -NoTypeInformation
         
         Write-Host "    [>] Getting DisableLowILProcessIsolation COM objects.." -Fore Magenta
         try {
@@ -504,7 +497,7 @@ function Export-Baselines {
 function Monitor-CreationEvents {
 <#
 .DESCRIPTION
-[+] Starts a file system watcher for temp directories; copies created files to script root.
+[+] Starts a file system watcher for a few common directories; copies created files to script root.
 [+] Registers a WMI event to monitor new processes that open.
 [+] Runs pe-sieve on the process and checks it's loaded modules.
 .NOTES 
@@ -528,12 +521,7 @@ function Monitor-CreationEvents {
         Copy-OnCreate 
 
         $eventQuery = "SELECT * FROM __InstanceCreationEvent WITHIN 1 WHERE TargetInstance ISA 'Win32_Process' " +
-              "AND TargetInstance.Name != 'pe-sieve64.exe' " +
-              "AND TargetInstance.Name != 'SearchProtocolHost.exe' " +
-              "AND TargetInstance.Name != 'SearchFilterHost.exe' " +
-              "AND TargetInstance.Name != 'dllhost.exe' " +
-              "AND TargetInstance.Name != 'svchost.exe'" + 
-              "AND TargetInstance.Name != 'smartscreen.exe'" +
+              "AND TargetInstance.Name != 'pe-sieve64.exe'" +
               "AND TargetInstance.Name != 'RuntimeBroker.exe'" + 
               "AND TargetInstance.Name != 'ApplicationFrameHost.exe'" + 
               "AND TargetInstance.Name != 'backgroundTaskHost.exe'" 
@@ -624,8 +612,8 @@ function Copy-OnCreate {
 
 function Get-COMHashes {
 	param (
-		[Parameter(Position=0)]
-		[string]$blDirectory
+	    [Parameter(Position=0)]
+	    [string]$blDirectory
 	)
 	
     $clsidDLL = reg query HKLM\SOFTWARE\Classes\CLSID\ /s /f ".dll" | 
@@ -645,7 +633,7 @@ function Get-COMHashes {
         } else {
             $fileHash = "File not found"
         }
-        $clsidDLLResult += [pscustomobject]@{
+        $clsidDLLResult += [PSCustomObject]@{
             FileHash = $fileHash
             FilePath = $path
         }
@@ -663,7 +651,7 @@ function Get-COMHashes {
         } else {
             $fileHash = "File not found"
         }
-        $clsidEXEResult += [pscustomobject]@{
+        $clsidEXEResult += [PSCustomObject]@{
             FileHash = $fileHash
             FilePath = $path
         }
@@ -677,7 +665,7 @@ function Extract-USNJournal {
         [string]$blDirectory
     )
 	
-	$dotnetExec = "C:\Program Files\dotnet\dotnet.exe"
+    $dotnetExec = "C:\Program Files\dotnet\dotnet.exe"
     $dotNetRuntimes = & $dotnetExec --list-runtimes
     $dn6Installed = $dotNetRuntimes -like "*Microsoft.NETCore.App 6.*"
     if (-not $dn6Installed) {
